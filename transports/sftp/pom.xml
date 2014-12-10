@@ -5,9 +5,11 @@
     <parent>
         <groupId>org.mule.transports</groupId>
         <artifactId>mule-transports</artifactId>
-        <version>3.5.3-SNAPSHOT</version>
+        <version>3.5.2</version>
     </parent>
+    <groupId>de.skon.integration.common</groupId>
     <artifactId>mule-transport-sftp</artifactId>
+    <version>3.5.2</version>
     <packaging>jar</packaging>
     <name>SFTP Transport</name>
     <description>A Mule transport for SFTP connectivity</description>
