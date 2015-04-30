@@ -6,22 +6,13 @@
  */
 package org.mule.transport.sftp;
 
-import static org.mule.transport.sftp.notification.SftpTransportNotification.SFTP_DELETE_ACTION;
-import static org.mule.transport.sftp.notification.SftpTransportNotification.SFTP_GET_ACTION;
-import static org.mule.transport.sftp.notification.SftpTransportNotification.SFTP_PUT_ACTION;
-import static org.mule.transport.sftp.notification.SftpTransportNotification.SFTP_RENAME_ACTION;
+import com.jcraft.jsch.*;
+import com.jcraft.jsch.ChannelSftp.LsEntry;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.mule.api.endpoint.ImmutableEndpoint;
 import org.mule.transport.sftp.notification.SftpNotifier;
 import org.mule.util.StringUtils;
-
-import com.jcraft.jsch.Channel;
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.ChannelSftp.LsEntry;
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.JSchException;
-import com.jcraft.jsch.Session;
-import com.jcraft.jsch.SftpATTRS;
-import com.jcraft.jsch.SftpException;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,8 +22,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Vector;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import static org.mule.transport.sftp.notification.SftpTransportNotification.*;
 
 /**
  * <code>SftpClient</code> Wrapper around jsch sftp library. Provides access to basic
@@ -303,35 +293,44 @@ public class SftpClient
         return listDirectory(".", false, true);
     }
 
-    public String[] listDirectories(String path) throws IOException
+    private String[] listDirectory(final String path, boolean includeFiles, boolean includeDirectories)
+            throws IOException
     {
-        return listDirectory(path, false, true);
+        final List<String> ret = new ArrayList<>();
+        for (final FileDescriptor desc : getFileDescriptorsFromDirectory(path, includeFiles, includeDirectories)) {
+            ret.add(desc.getFilename());
+        }
+        return ret.toArray(new String[ret.size()]);
     }
 
-    private String[] listDirectory(String path, boolean includeFiles, boolean includeDirectories)
+    public FileDescriptor[] getFileDescriptors() throws IOException
+    {
+        return getFileDescriptors(".");
+    }
+
+    public FileDescriptor[] getFileDescriptors(String path) throws IOException
+    {
+        return getFileDescriptorsFromDirectory(path, true, false);
+    }
+
+    private FileDescriptor[] getFileDescriptorsFromDirectory(final String path, boolean includeFiles, boolean includeDirectories)
             throws IOException
     {
         try
         {
-            Vector<LsEntry> entries = channelSftp.ls(path);
+            final Vector<LsEntry> entries = channelSftp.ls(path);
             if (entries != null)
             {
-                List<String> ret = new ArrayList<String>();
+                final List<FileDescriptor> ret = new ArrayList<>();
                 for (LsEntry entry : entries)
                 {
-                    if (includeFiles && !entry.getAttrs().isDir())
+                    final FileDescriptor fileDescriptor = new FileDescriptor(entry.getFilename(), entry.getAttrs());
+                    if (includeFile(includeFiles, includeDirectories, fileDescriptor))
                     {
-                        ret.add(entry.getFilename());
-                    }
-                    if (includeDirectories && entry.getAttrs().isDir())
-                    {
-                        if (!entry.getFilename().equals(".") && !entry.getFilename().equals(".."))
-                        {
-                            ret.add(entry.getFilename());
-                        }
+                        ret.add(fileDescriptor);
                     }
                 }
-                return ret.toArray(new String[ret.size()]);
+                return ret.toArray(new FileDescriptor[ret.size()]);
             }
         }
         catch (SftpException e)
@@ -341,10 +340,14 @@ public class SftpClient
         return null;
     }
 
-    // public boolean logout()
-    // {
-    // return true;
-    // }
+    private boolean includeFile(boolean includeFiles, boolean includeDirectories, final FileDescriptor fileDesc) {
+        if (includeFiles && !fileDesc.getAttrs().isDir())
+            return true;
+        if (includeDirectories && fileDesc.getAttrs().isDir() && !fileDesc.getFilename().equals(".") && !fileDesc.getFilename().equals("..")) {
+            return true;
+        }
+        return false;
+    }
 
     public InputStream retrieveFile(String fileName) throws IOException
     {
@@ -406,20 +409,11 @@ public class SftpClient
         }
     }
 
-    public void storeFile(String fileNameLocal, String fileNameRemote) throws IOException
+    private void notifyAction(int action, String fileName)
     {
-        storeFile(fileNameLocal, fileNameRemote, WriteMode.OVERWRITE);
-    }
-
-    public void storeFile(String fileNameLocal, String fileNameRemote, WriteMode mode) throws IOException
-    {
-        try
+        if (notifier != null)
         {
-            channelSftp.put(fileNameLocal, fileNameRemote, mode.intValue());
-        }
-        catch (SftpException e)
-        {
-            throw new IOException(e.getMessage());
+            notifier.notify(action, currentDirectory + "/" + fileName);
         }
     }
 
@@ -432,6 +426,23 @@ public class SftpClient
         catch (SftpException e)
         {
             throw new IOException(e.getMessage() + " (" + currentDirectory + "/" + filename + ")");
+        }
+    }
+
+    /**
+     * @param filename File name
+     * @return Attributes of the file
+     * @throws IOException If an error occurs
+     */
+    public SftpATTRS getAttr(String filename) throws IOException
+    {
+        try
+        {
+            return channelSftp.stat("./" + filename);
+        }
+        catch (SftpException e)
+        {
+            throw new IOException(e.getMessage());
         }
     }
 
